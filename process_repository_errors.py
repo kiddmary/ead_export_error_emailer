@@ -34,11 +34,10 @@ if not aspace_base_url:
 
 # Generate today's date for log filename and email subject
 today_date = datetime.date.today()
-formatted_date = today_date.strftime("%A %B %d, %Y")  # Outputs human-readable date e.g. Wednesday February 7, 2025
+formatted_date = today_date.strftime("%A %B %d, %Y")
 default_log_filename = f"exporter_app.out-{today_date.strftime('%Y-%m-%d')}"
 
 # Ask user for export log file (defaults to current date)
-# If you wish to review a different date's logs, enter the entire file name in this format: exporter_app.out-YYYY-MM-DD
 user_input = input(f"\nEnter the export log filename (default: {default_log_filename}): ").strip()
 log_filename = user_input if user_input else default_log_filename
 
@@ -54,20 +53,18 @@ else:
     yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     today = today_date.strftime("%Y-%m-%d")
 
-# Define the grep command to get errors from the SSH server
+# Define a broader grep command to get all early-morning logs
 log_path = f"/home/eadexport/archivesspace_export_service/exporter_app/logs/{log_filename}"
-grep_command = f'grep -E "{yesterday}|{today}T0[0-6]" {log_path} | grep "ERROR" | grep -oP "/repositories/\\K\\d+(?=/resources/\\d+)|(?<=/resources/)\\d+" | sed "N;s/\\n/ /" | sort -n | uniq'
+grep_command = f'grep -E "{yesterday}|{today}T0[0-6]" {log_path}'
 
 # Start SSH connection
 try:
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Trust the server
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(server, username=username, password=password)
 
-    # Execute grep command remotely
     stdin, stdout, stderr = ssh.exec_command(grep_command)
-    
-    # Read output
+
     output = stdout.read().decode().strip()
     errors = stderr.read().decode().strip()
 
@@ -75,9 +72,7 @@ try:
         print(f"Error executing grep command: {errors}")
 
     print("\n===== Retrieved Repository Errors =====")
-    if output:
-        print(output)
-    else:
+    if not output:
         print("No repository errors found.")
         exit()
 
@@ -90,35 +85,61 @@ finally:
 
 # Process the repository errors
 resources = []
+last_repo = None
+last_resource = None
+
 for line in output.splitlines():
-    ids = line.strip().split(" ")
-    if len(ids) == 2:
-        resources.append({"RepositoryID": int(ids[0]), "ResourceID": int(ids[1])})
+    # Look for resource URI lines
+    uri_match = re.search(r"/repositories/(\d+)/resources/(\d+)", line)
+    if uri_match:
+        last_repo = int(uri_match.group(1))
+        last_resource = int(uri_match.group(2))
+
+    # Match error lines of interest
+    if "ERROR" in line and (
+        "XML cleaning failed" in line
+        or "SolrIndexerError" in line
+        or "Validation error" in line
+    ):
+        if last_repo is not None and last_resource is not None:
+            resources.append({
+                "RepositoryID": last_repo,
+                "ResourceID": last_resource
+            })
+            # Clear after logging to avoid duplicates
+            last_repo = None
+            last_resource = None
+
+# Remove duplicates
+resources = [dict(t) for t in {tuple(d.items()) for d in resources}]
 
 if not resources:
     print("No repository errors found.")
     exit()
 
-# Generate the email text (replace with your sign-off/name)
+# Generate the email text
 email_subject = f"ArchivesSpace Validation Errors :: {formatted_date}"
 email_body = """Hello!
 
 Below you'll find a list of collections that encountered errors this morning during the export process. These errors were reported by the application that exports EAD to a Yale ArchivesSpace GitHub repository and generates the public-facing PDF finding aids.
 
-All best,
+All best,  
 [YOUR NAME]
+
+---
 
 """
 
-# Append errored resources to the email
+# Append errored resources
 for resource in resources:
     repository_id = resource["RepositoryID"]
     resource_id = resource["ResourceID"]
     resource_url = f"https://archives.yale.edu/repositories/{repository_id}/resources/{resource_id}"
-    email_body += f"{resource_id}, {resource_url}\n"
+    email_body += f"{resource_url}\n"
 
-# Email draft can be copied and pasted simply!
+# Print the email draft
 print("\n===== Email Preview =====")
 print(email_subject)
 print(email_body)
+print("\n---")
 print()
