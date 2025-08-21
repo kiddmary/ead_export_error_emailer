@@ -1,11 +1,33 @@
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-env/
+*.egg-info/
+.eggs/
+.venv/
 venv/
-.env
-*.env
+env/
+.pytest_cache/
+
+# --- Editors/IDE ---
 .vscode/
+.idea/
+
+# --- OS junk ---
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# --- Logs & dumps (adjust as you like) ---
+*.log
+*.out
+*.err
+
+# --- Local config / secrets (never commit) ---
+.env
+.ssh/
+id_*
+*.pem
+*.key
+*.crt

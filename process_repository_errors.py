@@ -5,32 +5,34 @@ problematic resources with URLs.
 
 The script prints the results to the console for manual copy/paste into email.
 
-Requires the following environment variables:
-  - EAD_SERVER
-  - ASPACE_USER
-  - ASPACE_PASS
-  - ASPACE_API_URL
+Requires (env):
+- EAD_SSH_HOST
+- OR EAD_SERVER
 """
 
 import paramiko
 import datetime
-import requests
 import os
 import re
-import getpass
 
 # SSH Configuration
-server = os.getenv("EAD_SERVER")
-username = os.getenv("ASPACE_USER")
-password = getpass.getpass("Enter your SSH password: ")
-
-# ArchivesSpace API Configuration
-aspace_pass = os.getenv("ASPACE_PASS")
-aspace_base_url = os.getenv("ASPACE_API_URL")
-
-if not aspace_base_url:
-    print("Error: ASPACE_API_URL environment variable not set.")
+host = os.getenv("EAD_SSH_HOST") or os.getenv("EAD_SERVER")
+if not host:
+    print("Error: set EAD_SSH_HOST (recommended) or EAD_SERVER.")
     exit()
+
+# Read ~/.ssh/config
+cfg = paramiko.SSHConfig()
+cfg_path = os.path.expanduser("~/.ssh/config")
+ssh_params = {"hostname": host}
+if os.path.exists(cfg_path):
+    with open(cfg_path) as f:
+        cfg.parse(f)
+    hc = cfg.lookup(host)
+    if "hostname" in hc: ssh_params["hostname"] = hc["hostname"]
+    if "user" in hc:     ssh_params["username"] = hc["user"]
+    if "port" in hc:     ssh_params["port"] = int(hc["port"])
+    if "identityfile" in hc: ssh_params["key_filename"] = hc["identityfile"]
 
 # Generate today's date for log filename and email subject
 today_date = datetime.date.today()
@@ -54,14 +56,14 @@ else:
     today = today_date.strftime("%Y-%m-%d")
 
 # Define a broader grep command to get all early-morning logs
-log_path = f"/home/eadexport/archivesspace_export_service/exporter_app/logs/{log_filename}"
+log_path = f"/usr/local/src/archivesspace_export_service/exporter_app/logs/{log_filename}"
 grep_command = f'grep -E "{yesterday}|{today}T0[0-6]" {log_path}'
 
 # Start SSH connection
 try:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(server, username=username, password=password)
+    ssh.connect(allow_agent=True, look_for_keys=True, timeout=20, **ssh_params)
 
     stdin, stdout, stderr = ssh.exec_command(grep_command)
 
